@@ -1,0 +1,23 @@
+# ⚠️ Ye repo PUBLIC hai — koi secret commit nahi hona chahiye.
+
+# Private keys / certificates
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+id_ecdsa*
+
+# Kubernetes credentials
+kubeconfig*
+*.kubeconfig
+
+# Environment / secret files
+*.env
+.env*
+secrets/
+
+# Logs (in mein IPs ke ilawa machine ki details hoti hain; repo mein zaroorat nahi)
+logs/
+*.log
