@@ -37,3 +37,6 @@ NODE_ORDER=(s4 s3 s2 s1)
 # Kis node pe kaunsi prereqs script/mode
 K8S_NODES=(s1 s2)      # poori k8s-prereqs (swap + modules + sysctl)
 SWAP_ONLY_NODES=(s3)   # sirf swap off (k3s ke liye)
+
+# Root LV mein VG ki saari khaali jagah (disk-extend.sh) — chhoti disks wale nodes
+DISK_EXTEND_NODES=(s1 s3)

@@ -6,7 +6,7 @@
 #   ./run-phase0.sh s4 s3        # sirf diye gaye nodes
 # Har node: files copy -> common.sh -> (k8s-prereqs.sh) -> zaroorat ho to reboot + intezar.
 # Aik waqt mein aik node. Koi step fail ho to wahin ruk jata hai (set -e).
-# ssh-hardening.sh yahan se NAHI chalti — wo alag, confirmation ke baad.
+# ssh-hardening.sh aur sudoers-cleanup.sh yahan se NAHI chaltin — wo alag, soch samajh kar.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,6 +62,11 @@ for node in "${NODES[@]}"; do
     ssh "${SSH_OPTS[@]}" "${SSH_USER}@${ip}" "sudo bash '${REMOTE_DIR}/k8s-prereqs.sh'" 2>&1 | tee -a "$logfile"
   elif in_list "$node" "${SWAP_ONLY_NODES[@]}"; then
     ssh "${SSH_OPTS[@]}" "${SSH_USER}@${ip}" "sudo bash '${REMOTE_DIR}/k8s-prereqs.sh' --swap-only" 2>&1 | tee -a "$logfile"
+  fi
+
+  # disk-extend.sh (sirf DISK_EXTEND_NODES; jagah na ho to kuch nahi karti)
+  if in_list "$node" "${DISK_EXTEND_NODES[@]}"; then
+    ssh "${SSH_OPTS[@]}" "${SSH_USER}@${ip}" "sudo bash '${REMOTE_DIR}/disk-extend.sh'" 2>&1 | tee -a "$logfile"
   fi
 
   # Reboot zaroori ho to (s1 ko yahan se reboot nahi karte — orchestrator khud s1 pe chal raha hai)

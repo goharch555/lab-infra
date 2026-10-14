@@ -140,6 +140,9 @@ jo applications use karti hain (`/etc/nsswitch.conf`: pehle `/etc/hosts`, phir D
      renderer: networkd
      ethernets:
        ens33:
+         match:
+           macaddress: "00:0c:29:xx:xx:xx"   # us node ka MAC (Step 12 mein add hua)
+         set-name: ens33
          dhcp4: false
          dhcp6: false
          ignore-carrier: true
@@ -282,11 +285,13 @@ karna hai, ye planning ka faisla hai (baad mein naya LV bhi ban sakta hai, jaise
 | s3 | 20G  | 10G | ~8.2G |
 | s4 | 60G  | 29G | ~29G |
 
+> Baad mein s1 aur s3 ka root LV saari khaali jagah se bara kiya gaya: **Step 10** dekho.
+
 **Production mein ahmiyat:** Disk full hone pe Kubernetes node pe "DiskPressure" aata hai aur pods
 evict hone lagte hain. Container images aur logs bohat jagah lete hain. `/var/lib/containerd` aur
 registry storage ki planning pehle se karo.
 
-**Verify / baad mein extend karna ho to (abhi NAHI kiya):**
+**Verify / extend kaise hota hai (Step 10 mein s1, s3 pe kiya):**
 ```bash
 sudo vgs; sudo lvs; df -h /
 # misal: sudo lvextend -r -L +5G /dev/ubuntu-vg/ubuntu-lv   (-r = filesystem bhi resize)
@@ -453,6 +458,204 @@ khula rakho aur nayi session se login test karo.
 
 ---
 
+## Phase 0 follow-up: 3 naye steps
+
+Pehli report ke baad ye 3 faisle kiye gaye:
+
+### Step 10: Root disk extend: `disk-extend.sh` (sirf s1, s3)
+
+**Kya kiya:** s1 aur s3 pe root LV sirf 10G tha aur 73–76% bhar chuka tha, jab ke `ubuntu-vg` mein
+8.22G khaali para tha. Script ne:
+1. `findmnt -no SOURCE /` se pata kiya ke `/` kis device pe hai, phir `lvs` se LV ka **asal path**
+   (`/dev/ubuntu-vg/ubuntu-lv`) aur VG nikala. Path hardcode nahi kiya.
+2. `vgs -o vg_free_count` se check kiya ke VG mein khaali extents hain ya nahi. **0 hon to kuch nahi
+   karti.** Isi wajah se script idempotent hai.
+3. `lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv` chalaya, **online**, yaani system chalte chalte.
+4. Verify kiya ke VG mein ab 0 khaali hai, aur `df -h /` pehle aur baad dono print kiye.
+
+| Node | Pehle | Baad |
+|------|-------|------|
+| s1 | 9.8G, 76% used | 18G, 42% used |
+| s3 | 9.8G, 73% used | 18G, 40% used |
+
+`inventory.sh` mein `DISK_EXTEND_NODES=(s1 s3)` hai, aur `run-phase0.sh` isay khud chalati hai.
+
+**`lvextend -r` kya karta hai?** Ye do kaam aik saath karta hai:
+- **LV bara karna:** VG ke khaali extents (`+100%FREE` = saare) LV ko de diye. Ab block device bara hai.
+- **Filesystem bara karna (`-r` = `--resizefs`):** sirf LV bara karne se filesystem ko pata nahi
+  chalta. Wo purane size pe hi rehta hai aur `df` purana size dikhata hai. `-r` andar se `fsadm`
+  chalata hai, jo ext4 ke liye `resize2fs` aur xfs ke liye `xfs_growfs` chalata hai.
+- ext4 aur xfs dono **online grow** support karte hain, yani mounted `/` ko unmount kiye baghair. Is
+  liye reboot ki zaroorat nahi padi. (Shrink karna alag aur khatarnak kaam hai: xfs shrink ho hi nahi
+  sakta, aur ext4 sirf unmount karke shrink hota hai.)
+- `-l +100%FREE` mein `-l` ka matlab hai **extents** mein size dena. `-L +5G` bytes mein deta hai.
+
+**Kyun:** Agle phases mein s1 pe containerd images, etcd, kubelet aur logs aayenge, aur s3 pe k3s +
+Argo CD. Ye sab `/var` mein jagah lete hain. 10G root jaldi bhar jata.
+
+**DiskPressure aur eviction (production mein ahmiyat):**
+- kubelet har node pe disk ko monitor karta hai: `nodefs` (root/kubelet ka filesystem) aur
+  `imagefs` (container images ka filesystem).
+- Default **hard eviction thresholds**: `nodefs.available < 10%`, `imagefs.available < 15%`,
+  `nodefs.inodesFree < 5%`.
+- Threshold cross ho to node pe **`DiskPressure=True`** condition lagti hai. Uske baad:
+  1. Node pe `node.kubernetes.io/disk-pressure:NoSchedule` taint lagta hai, aur **naye pods schedule
+     nahi hote**.
+  2. kubelet pehle **garbage collection** karta hai: istemal na hone wali images aur mare hue
+     containers hatata hai.
+  3. Phir bhi jagah na bane to pods ko **evict** karta hai. Tarteeb: (a) pehle wo pods jo apni
+     `ephemeral-storage` request se **zyada** use kar rahe hon, (b) phir kam **Pod Priority** wale, (c) phir
+     jo request ke muqable sab se zyada disk kha rahe hon. Jin pods ki koi request hi nahi (aksar
+     BestEffort), wo is wajah se pehle nishana bante hain.
+- Nateeja ye hota hai ke apps achanak doosre nodes pe chali jati hain ya Pending reh jati hain. Agar
+  control-plane node bhar jaye to etcd bhi masla karta hai (etcd ki apni space quota/alarm hoti hai).
+- Production mein disk usage pe alert lagaye jate hain (misal 75%/85%), `/var/lib/containerd` aksar
+  alag disk pe rakha jata hai, aur image GC thresholds tune kiye jate hain.
+
+**Verify:**
+```bash
+df -h /
+sudo lvs; sudo vgs       # VFree 0
+kubectl describe node s1 | grep -A6 Conditions   # (Phase 1 ke baad) DiskPressure False
+```
+
+**Interview sawal:** *`lvextend` ke baad bhi `df -h` purana size dikha raha hai. Kyun, aur kya karoge?*
+**Jawab:** LV (block device) bara ho gaya, lekin filesystem abhi purane size pe hai. ext4 ke liye
+`resize2fs /dev/vg/lv` aur xfs ke liye `xfs_growfs /mountpoint` chalao (online). Ye masla shuru se
+hi na ho, is ke liye `lvextend -r` use karo, jo dono kaam aik saath karta hai.
+
+**Interview sawal 2:** *Kubernetes node pe DiskPressure aaye to kya hota hai?*
+**Jawab:** Node pe `DiskPressure` condition aur `disk-pressure:NoSchedule` taint lag jata hai, aur
+naye pods us node pe schedule nahi hote. kubelet pehle unused images aur dead containers saaf karta
+hai. Phir bhi jagah na bane to pods evict karta hai: pehle wo jo apni ephemeral-storage request se
+zyada use kar rahe hon, phir priority aur usage ke hisaab se.
+
+### Step 11: sudoers cleanup: `sudoers-cleanup.sh` (s1)
+
+**Kya mila:** s1 pe `/etc/sudoers.d/` mein do purani files thi, dono `0644`:
+| File | Content | Matlab |
+|------|---------|--------|
+| `nopasswd-sudo` | `%sudo ALL=(ALL) NOPASSWD:ALL` | **`sudo` group** ke har member ko bina password sudo. Group mein sirf `gohar` hai, is liye asal mein wohi kaam jo `90-gohar-nopasswd` karta hai. **s1 pe gohar ka passwordless sudo ISI file se chal raha tha.** |
+| `username` | `username ALL=(ALL) NOPASSWD:ALL` | `username` naam ke user ke liye rule, lekin aisa koi user mojood hi nahi. Installer/template ka bacha hua faltu rule. |
+
+`visudo -c` dono pe *"bad permissions, should be mode 0440"* de raha tha.
+
+**Kya kiya (is tarteeb mein):**
+1. **Wapsi ka raasta pehle:** aik alag SSH session mein root shell khula rakha, taake sudo toot bhi
+   jaye to us se theek ho sake. Phir poora `/etc/sudoers.d` copy kiya:
+   `/root/sudoers-backup/full-<timestamp>/`.
+2. **Pehle nayi file, phir purani hatao:** s1 pe `00-sudo-nopasswd.sh` chalaya, jis se
+   `90-gohar-nopasswd` bani. Agar `nopasswd-sudo` pehle hata dete to gohar ka sudo password maangne
+   lagta aur saari automation ruk jati.
+3. `sudoers-cleanup.sh nopasswd-sudo username`:
+   - **Step A:** har file `chown root:root` + `chmod 0440`. Har file ke baad `visudo -c` chalaya.
+     Badli hui file "parsed OK" na ho to purani permission wapas.
+   - **Step B:** dono purani files `/root/sudoers-backup/` mein **move** ki (delete nahi). Har move ke
+     baad `visudo -c` **aur** `sudo -l -U gohar` mein `NOPASSWD: ALL` check kiya. Koi bhi fail ho to file
+     foran wapas.
+   - Aakhir mein poora `visudo -c` ka **exit 0** zaroori hai.
+4. Nayi SSH session se `sudo -k; sudo -n true` se test kiya, phir rescue session band ki.
+
+Ab s1 bilkul s2, s3, s4 jaisa hai: `/etc/sudoers.d/` mein sirf `90-gohar-nopasswd` aur `README`,
+dono `440 root:root`.
+
+**Aik bareek baat (script mein seekhi):** jab tak **doosri** files ki permission ghalat ho,
+`visudo -c` exit 1 deta hai. Is liye "har badlao ke baad sirf exit code dekho" wala check pehli hi
+file pe rollback kar deta. Script badli hui file ki line ("parsed OK") aur syntax errors ko dekhti hai,
+aur poore `visudo -c` ka exit 0 sirf aakhir mein maangti hai.
+
+**Kyun:**
+- `sudo` khud world-writable files ko ignore kar deta hai. 0440 standard hai: sirf root parh sake,
+  koi likh na sake, taake koi aur user apne aap ko sudo na de sake.
+- Faltu rules security ka khatra hain. Agar kal koi `username` naam ka user ban jaye to usay foran
+  bina password root mil jata. Group-wide `%sudo NOPASSWD` bhi khatarnak hai: jo bhi `sudo` group mein
+  daala jaye, usay bina password root mil jata hai. Specific user ka rule zyada wazeh hai.
+- Har node pe **aik jaisi** config ho (consistency). Snowflake servers debug karna mushkil hota hai.
+
+**Production mein ahmiyat:** Privilege access ka audit compliance (CIS, SOC2) ka hissa hai. sudoers
+hamesha config management se aur `visudo` check ke saath badla jata hai. Remote server pe sudo/SSH
+badalte waqt hamesha **aik session khula rakho**, jaise SSH hardening mein.
+
+**Verify:**
+```bash
+sudo visudo -c; echo $?                       # 0, aur koi "bad permissions" nahi
+sudo stat -c '%a %U:%G %n' /etc/sudoers.d/*   # sab 440 root:root
+sudo -k; sudo -n true && echo OK              # passwordless sudo abhi bhi chal raha hai
+sudo -l -U gohar                              # gohar ke effective rules
+```
+
+**Interview sawal:** *Remote server pe sudoers badalte waqt lock-out se kaise bachoge?*
+**Jawab:** (1) Badalne se pehle aik alag root session khuli rakho. (2) Backup lo. (3) Nayi file temp
+jagah likh kar `visudo -cf` se check karo, phir `install -m 0440` se rakho. (4) Pehle naya rule lagao,
+uske baad purana hatao. (5) Har badlao ke baad `visudo -c` aur asal test (`sudo -k; sudo -n true`)
+karo, aur fail ho to foran wapas lao. (6) Nayi session se test karne ke baad hi purani session band karo.
+
+### Step 12: Netplan MAC match + `set-name` (vmxnet3 ki tayyari, charon nodes)
+
+**Kya kiya:** `common.sh` ka network step ab `01-static.yaml` mein interface ko **MAC se** match karta
+hai aur naam `ens33` set karta hai:
+```yaml
+    ens33:
+      match:
+        macaddress: "00:0c:29:7c:76:18"   # s4 ka MAC (/sys/class/net/ens33/address se)
+      set-name: ens33
+      dhcp4: false
+      ... (baaqi settings wohi)
+```
+Ye `sudo bash common.sh <node> network` se chalaya (sirf network step, apt waghera nahi), tarteeb
+s4 → s3 → s2 → s1. Wohi `netplan generate` + `netplan-safe-apply.sh` (rollback ke saath). Har node pe
+pehle aur baad `ip -4 addr` aur `ip route` **bilkul same** the.
+
+| Node | MAC (ens33) |
+|------|-------------|
+| s1 | `00:0c:29:c5:96:3d` |
+| s2 | `00:0c:29:d6:99:e3` |
+| s3 | `00:0c:29:6a:28:4c` |
+| s4 | `00:0c:29:7c:76:18` |
+
+**Kyun (MAC match + set-name):**
+- Linux interface ka "predictable" naam **hardware ki jagah aur type** se banata hai. `ens33` ka
+  matlab hai PCI slot 33. VMware mein adapter `pcnet32` se `vmxnet3` karo to naya device naye slot
+  pe aata hai aur naam badal jata hai (aam tor pe `ens160`/`ens192`).
+- Purani config `ens33:` naam se match karti thi. Naam badalte hi koi config match nahi karti:
+  na IP, na route. Node network se kat jata aur sirf VMware console se theek hota.
+- `match: macaddress` interface ko **MAC** se pehchanta hai, aur adapter type badalne pe bhi VMware
+  aam tor pe MAC wohi rakhta hai. `set-name: ens33` us interface ka naam wapas `ens33` kar deta hai,
+  is liye baaqi sab (scripts, docs, firewall rules, k8s config) jaisa hai waisa chalta rahega.
+- Andar kya banta hai: netplan `/run/systemd/network/10-netplan-ens33.link` banata hai
+  (`[Match] PermanentMACAddress=...` → `[Link] Name=ens33`). Boot pe udev isi `.link` file se naam
+  rakhta hai. Check karne ke liye: `udevadm info /sys/class/net/ens33 | grep ID_NET_LINK_FILE`.
+
+**⚠️ Adapter badalne se pehle/baad:**
+- VMware mein adapter badalne ke baad VM ka MAC wohi rehna chahiye. Agar VMware naya MAC de de (misal
+  `.vmx` mein `ethernet0.addressType`/`generatedAddress` reset ho jaye), to match fail ho jayega aur
+  network nahi aayega. Tab console se `01-static.yaml` mein naya MAC dalo, ya `ip link` se dekh kar
+  `common.sh <node> network` chalao.
+- Aik waqt mein aik node badlo (pehle s4), aur verify karke hi agla node.
+
+**Production mein ahmiyat:** Servers pe NIC ka naam badalna (driver update, hardware change, VM
+migration, cloud instance type change) aam masla hai, aur iska nateeja "server boot hua lekin network
+nahi". MAC-based match + stable naam isi se bachata hai. Cloud images (cloud-init) bhi yahi karti
+hain: `match: macaddress` + `set-name`.
+
+**Verify:**
+```bash
+ip -br link show ens33                          # naam ens33, MAC wohi
+sudo netplan get ethernets.ens33                # match.macaddress + set-name
+sudo cat /run/systemd/network/10-netplan-ens33.link
+udevadm info /sys/class/net/ens33 | grep -E "ID_NET_LINK_FILE|ID_NET_NAME="
+ip -4 addr show ens33; ip route                 # static IP + default via 192.168.2.2
+```
+
+**Interview sawal:** *VM ka network adapter badalne ke baad server pe network nahi aa raha. Kya wajah ho sakti hai aur kaise bachoge?*
+**Jawab:** Naye adapter ka PCI slot/driver mukhtalif hai, is liye predictable interface naam badal gaya
+(misal `ens33` → `ens160`). Netplan/network config purane naam se match karti thi, is liye naye
+interface pe koi config nahi lagi. Bachao: config ko MAC se match karo (`match: macaddress`) aur
+`set-name` se naam stable rakho. Ye change adapter badalne se **pehle** kar lo, aur MAC ka wohi
+rehna confirm karo.
+
+---
+
 ## Report kaise lein
 
 ```bash
@@ -467,6 +670,7 @@ for ip in 192.168.2.11 192.168.2.12 192.168.2.13 192.168.2.14; do ssh gohar@$ip 
 | Purani netplan files | `/root/netplan-backup/<timestamp>/` |
 | Original `/etc/hosts` | `/root/hosts.bak-phase0` |
 | Original `/etc/fstab` | `/root/fstab.bak-phase0` (s1, s2, s3) |
+| Purani sudoers files | s1: `/root/sudoers-backup/` (`nopasswd-sudo`, `username`, aur `full-<timestamp>/`) |
 | Run logs | s1: `~/lab-infra/phase0/logs/` (git mein nahi) |
 
 ---
@@ -506,6 +710,5 @@ diya jata hai, taake koi bug ho to sab machines aik saath kharab na hon. Ye jaan
 ### 6. VMware NIC: pcnet32 (purana adapter)
 Charon VMs ka network adapter `pcnet32` (AMD PCnet/"vlance") hai, jo bohat purana emulated adapter
 hai (10 Mbps report karta hai, CPU zyada khata hai). Production/lab ke liye `vmxnet3` behtar hai.
-**Abhi kuch nahi badla.** Agar baad mein badlo to interface ka naam (`ens33`) badal sakta hai. Phir
-`/etc/netplan/01-static.yaml` mein naya naam dalna hoga, warna node ka network nahi aayega
-(console se theek karna padega).
+Adapter badalne se interface ka naam (`ens33`) badal sakta hai. Isi liye **Step 12** mein netplan
+ko MAC match + `set-name: ens33` pe kar diya gaya. Adapter khud VMware mein badalna hai.

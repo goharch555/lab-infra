@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # common.sh — Phase 0: har node (s1..s4) pe base preparation.
 #
-# Istemaal (node pe, root se):   sudo bash common.sh <s1|s2|s3|s4>
+# Istemaal (node pe, root se):
+#   sudo bash common.sh <s1|s2|s3|s4>                 # saare steps
+#   sudo bash common.sh <s1|s2|s3|s4> network         # sirf diya gaya step (hosts|network|time|packages|disk)
 # Idempotent hai: dobara chalane se sirf wohi cheez badalti hai jo desired state se mukhtalif ho.
 # Agar upgrade ke baad reboot chahiye ho to aakhir mein "REBOOT_REQUIRED" print hota hai;
 # reboot khud nahi karti — wo run-phase0.sh karti hai (aik waqt mein aik node).
@@ -12,6 +14,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/inventory.sh"
 
 NODE="${1:?node ka naam do: s1|s2|s3|s4}"
+shift
+STEPS=("${@:-all}")   # koi step na diya ho to sab
+want() { [[ " ${STEPS[*]} " == *" all "* || " ${STEPS[*]} " == *" $1 "* ]]; }
 log()  { echo "[${NODE}] [common] $*"; }
 fail() { echo "[${NODE}] [common] ERROR: $*" >&2; exit 1; }
 
@@ -33,6 +38,7 @@ log "node=${NODE} ip=${IP} iface=${IFACE} role='${NODE_ROLE[$NODE]}'"
 # =============================================================================
 # Step 1: Hostname aur /etc/hosts
 # =============================================================================
+if want hosts; then
 # Hostname set karo (sirf agar mukhtalif ho)
 if [[ "$(hostnamectl --static)" != "$NODE" ]]; then
   hostnamectl set-hostname "$NODE"
@@ -67,10 +73,18 @@ else
 fi
 rm -f "$tmp_hosts"
 
+fi
+
 # =============================================================================
 # Step 2: Static IP (netplan) — wohi IP jo DHCP se aa raha tha
 # =============================================================================
+if want network; then
 NETPLAN_FILE="/etc/netplan/01-static.yaml"
+# Interface ko NAAM se nahi, MAC se pehchano, aur naam hamesha ens33 rakho (set-name).
+# Is se VMware adapter type badalne (pcnet32 -> vmxnet3) pe kernel ka naya naam (ens160 waghera) asar nahi karta.
+MAC="$(cat "/sys/class/net/${IFACE}/address")"
+[[ "$MAC" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]] || fail "${IFACE} ka MAC theek nahi mila: '${MAC}'"
+log "MAC ${IFACE} = ${MAC}"
 DNS_YAML="$(IFS=,; echo "${DNS_SERVERS[*]}" | sed 's/,/, /g')"
 DESIRED_NETPLAN="$(cat <<EOF
 # lab-infra phase0 — static IP (common.sh ne likha)
@@ -79,6 +93,9 @@ network:
   renderer: networkd
   ethernets:
     ${IFACE}:
+      match:
+        macaddress: "${MAC}"
+      set-name: ${IFACE}
       dhcp4: false
       dhcp6: false
       ignore-carrier: true
@@ -146,9 +163,12 @@ ip -4 addr show dev "$IFACE" | grep -q "inet ${IP}/${PREFIX}" || fail "${IFACE} 
 ip -4 route show default | grep -q "via ${GATEWAY} dev ${IFACE}" || fail "default route ${GATEWAY} pe nahi"
 log "verify: ${IFACE} static ${IP}/${PREFIX}, default via ${GATEWAY}"
 
+fi
+
 # =============================================================================
 # Step 3: Timezone UTC + chrony (time sync)
 # =============================================================================
+if want time; then
 # "UTC" aur "Etc/UTC" aik hi zone hain (Etc/UTC canonical naam hai), dono ko theek mano
 tz="$(timedatectl show -p Timezone --value)"
 if [[ "$tz" != "UTC" && "$tz" != "Etc/UTC" ]]; then
@@ -175,18 +195,24 @@ done
 [[ "$synced" == "yes" ]] || { chronyc sources -v || true; fail "120s mein clock synchronize nahi hui"; }
 log "verify: System clock synchronized: yes ($(chronyc tracking | awk -F': ' '/Reference ID/{print $2}'))"
 
+fi
+
 # =============================================================================
 # Step 4: OS update + base packages
 # =============================================================================
+if want packages; then
 apt-get update -o DPkg::Lock::Timeout=300
 apt-get full-upgrade "${APT_OPTS[@]}"
 apt-get install "${APT_OPTS[@]}" curl ca-certificates gnupg git jq vim bash-completion
 apt-get autoremove "${APT_OPTS[@]}"
 log "packages up to date"
 
+fi
+
 # =============================================================================
 # Step 5: Disk report (SIRF report, kuch extend nahi)
 # =============================================================================
+if want disk; then
 log "---- disk report ----"
 lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS
 df -h /
@@ -208,12 +234,17 @@ while read -r disk; do
   fi
 done < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print $1}')
 
+fi
+
 # =============================================================================
 # Reboot chahiye? (reboot run-phase0.sh karegi)
 # =============================================================================
+if want packages; then
 if [[ -f /var/run/reboot-required ]]; then
   log "REBOOT_REQUIRED ($(tr '\n' ' ' < /var/run/reboot-required.pkgs 2>/dev/null))"
 else
   log "reboot ki zaroorat nahi"
 fi
+fi
+
 log "DONE"

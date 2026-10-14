@@ -60,6 +60,8 @@ lab-infra/
     ├── common.sh           # har node: hostname, hosts, static IP, UTC/chrony, apt, disk report
     ├── netplan-safe-apply.sh # netplan apply + 30s mein gateway na mile to rollback
     ├── k8s-prereqs.sh      # s1/s2: swap off + modules + sysctl;  s3: --swap-only
+    ├── disk-extend.sh      # s1/s3: VG ki khaali jagah root LV mein (lvextend -r, online)
+    ├── sudoers-cleanup.sh  # sudoers.d: 0440 root:root + purani files retire (visudo -c ke saath)
     ├── ssh-hardening.sh    # password/root SSH login band (confirmation ke BAAD hi)
     ├── run-phase0.sh       # s1 se sab nodes pe chalata hai (s4 → s3 → s2 → s1)
     └── verify.sh           # report (kuch badalta nahi)
@@ -71,6 +73,7 @@ lab-infra/
 cd ~/lab-infra/phase0
 ./run-phase0.sh            # sab nodes: s4, s3, s2, s1 (aik waqt mein aik)
 ./run-phase0.sh s2         # sirf aik node
+ssh gohar@192.168.2.14 'sudo bash /tmp/lab-infra-phase0/common.sh s4 network'   # sirf aik step (scripts copy hone ke baad)
 for ip in 192.168.2.1{1..4}; do ssh gohar@$ip 'bash -s' < verify.sh; done   # report
 ```
 
