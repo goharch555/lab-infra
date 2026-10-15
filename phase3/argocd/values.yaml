@@ -1,0 +1,70 @@
+# values.yaml — argo/argo-cd chart 10.10.5 (Argo CD v3.5.5), management cluster (k3s, s3).
+# REPO MEIN HAI: koi secret nahi. TLS Secret (argocd-server-tls) argocd-install.sh kubectl se banati hai.
+# Har resource value ki wajah: docs/phase3.md → "Resources".
+# s3 = 2 vCPU / 3.8 GiB. Single replica (HA nahi — lab).
+
+global:
+  domain: argocd.lab.local
+
+# SSO (Dex) abhi nahi — sirf local admin. (SSO/RBAC: backlog, Phase 6)
+dex:
+  enabled: false
+
+configs:
+  params:
+    # TLS Traefik (ingress) pe khatam hota hai; Traefik → argocd-server traffic cluster ke andar HTTP.
+    server.insecure: true
+
+# ---------------------------------------------------------------------------------------------
+# Resources: requests = scheduler ke liye "guaranteed" hissa (Phase 1 sabaq: requests ke baghair
+# scheduler ko asal kharch nazar nahi aata). Memory LIMIT = leak ho to sirf wahi pod OOM ho, node nahi.
+# CPU limit jaan-boojh kar NAHI (throttling se latency; CPU "compressible" hai — doosre pods ko
+# requests ke hisaab se hissa phir bhi milta hai).
+# ---------------------------------------------------------------------------------------------
+
+controller:                       # application-controller: sab se bhari (cluster state cache + diff)
+  replicas: 1
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 1Gi}
+
+repoServer:                       # git clone + manifests render (helm/kustomize) — bursty
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+server:                           # API + UI
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hostname: argocd.lab.local
+    tls: true                     # secret "argocd-server-tls" (chart ka fixed naam)
+    annotations:
+      # SIRF HTTPS entrypoint (443). Warna Traefik isi Ingress ko port 80 (plain HTTP) pe bhi
+      # serve karta — login password plain text mein jata.
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+      traefik.ingress.kubernetes.io/router.tls: "true"
+
+applicationSet:                   # ApplicationSet controller (abhi kaam nahi, halka)
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+redis:                            # controller/server ka cache (persistent nahi)
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+notifications:                    # notifications controller (abhi koi trigger nahi)
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 128Mi}
+
+redis-ha:
+  enabled: false

@@ -57,9 +57,13 @@ fi
 
 # --- Step 5: kubeconfig gohar ke liye (600) -------------------------------------------------
 install -d -m 0700 -o "$LOGIN_USER" -g "$LOGIN_USER" "${LOGIN_HOME}/.kube"
-if ! cmp -s /etc/kubernetes/admin.conf "${LOGIN_HOME}/.kube/config"; then
+# Sirf tab likho jab file mojood hi na ho. Phase 3 ke baad is file mein doosre contexts (lab-mgmt) bhi
+# hain — overwrite karne se wo mit jate. (Workload context ka naam phase3/kubeconfig-s1.sh "lab-workload" rakhti hai.)
+if [[ ! -f "${LOGIN_HOME}/.kube/config" ]]; then
   install -m 0600 -o "$LOGIN_USER" -g "$LOGIN_USER" /etc/kubernetes/admin.conf "${LOGIN_HOME}/.kube/config"
   log "${LOGIN_HOME}/.kube/config likha (600)"
+else
+  log "${LOGIN_HOME}/.kube/config pehle se mojood — overwrite NAHI (doosre contexts mehfooz)"
 fi
 
 # --- Step 6: kubectl bash completion (sab users ke liye) ------------------------------------

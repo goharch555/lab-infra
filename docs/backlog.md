@@ -43,3 +43,20 @@
 - [ ] **Registry data backup** (`/srv/registry/data`) aur GC ka schedule (registry read-only window mein).
 - [ ] **Docker group**: `gohar` docker group mein hai (= root). CI runner ke liye alag user / rootless builder (Phase 4).
 
+## PKI / certificates (Phase 3 ke baad)
+- [ ] **Root CA offline + intermediate CA**: abhi Lab Root CA ki key s4 pe "online" hai aur har cert seedha root
+      se sign hota hai. Behtar: root key offline (encrypted, VM se bahar), aik **intermediate CA** roz ke signing ke
+      liye (cert-manager/s4). Intermediate leak ho to sirf usay revoke/badlo, root nahi.
+- [ ] **CA key ka offline backup** (encrypted; `/root/lab-ca/ca.key`): s4 ki disk gayi to nayi CA + har node pe trust dobara.
+- [ ] **Registry cert renewal (Oct 15, 2027)**: `phase2/lab-ca.sh` + `registry.sh` (30 din pehle khud naya).
+- [ ] **argocd.lab.local cert renewal (Oct 15, 2027)**: `phase3/argocd-cert.sh` + `argocd-install.sh`
+      (Secret update). Behtar: **cert-manager** (Lab CA → ClusterIssuer) jo renewal khud kare.
+
+## Argo CD
+- [ ] **[Phase 6] Argo CD SSO + RBAC**: abhi sirf local `admin` (password s1 `/root/argocd-admin-password`). OIDC (Dex/
+      Keycloak) + `argocd-rbac-cm` (read-only default, admin sirf group ko), phir local admin **disable**.
+- [ ] **Argo CD resources review**: workload cluster (Phase 4) register aur apps aane ke baad `kubectl top` se
+      application-controller / repo-server ki requests/limits dobara set karna.
+- [ ] **Management cluster backup**: k3s datastore (`k3s etcd-snapshot` ya sqlite backup) + Argo CD config
+      (`argocd admin export`). Hub gaya to sab spokes ka control gaya.
+

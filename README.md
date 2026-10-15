@@ -43,13 +43,13 @@ gateway aur DNS dono `192.168.2.2`.
 | **0** | Node preparation: hostname, `/etc/hosts`, static IP, UTC + chrony, OS update, swap/kernel prereqs, disk extend, sudoers, netplan MAC match | ✅ (SSH hardening baaqi: [backlog](docs/backlog.md)) |
 | **1** | kubeadm workload cluster (s1 control-plane + s2 worker): containerd 2.4.2, Kubernetes v1.37.1, Calico v3.33.0, etcd backup | ✅ [docs/phase1.md](docs/phase1.md) |
 | **2** | s4 pe secure container registry: Lab Root CA, TLS, htpasswd auth, Docker CE; s1/s2/s4 pe CA trust + containerd `hosts.toml` | ✅ [docs/phase2.md](docs/phase2.md) |
-| 3 | s3 pe k3s management cluster + Argo CD | ⏳ |
-| 4 | CI runner (s4) + GitOps: Argo CD se workload cluster pe apps deploy | ⏳ |
+| **3** | s3 pe k3s management cluster (v1.36.5+k3s1) + Argo CD v3.5.5 (Helm, Traefik TLS, Lab CA cert); s1 = admin workstation (contexts `lab-workload`, `lab-mgmt`) | ✅ [docs/phase3.md](docs/phase3.md) |
+| 4 | Workload cluster ko Argo CD (hub) mein register + CI runner (s4) + GitOps se apps deploy | ⏳ |
 | 5 | Sealed Secrets (imagePullSecret waghera git se, encrypted) | ⏳ |
 | 6 | Hardening: etcd encryption at rest, off-node backups ([backlog](docs/backlog.md)) | ⏳ |
 | 7 | Observability (metrics-server, monitoring, logging) aur ingress/gateway | ⏳ |
 
-> Phase 3 se aage ki list plan hai, waqt ke saath badal sakti hai. Baaqi kaam: [docs/backlog.md](docs/backlog.md).
+> Phase 4 se aage ki list plan hai, waqt ke saath badal sakti hai. Baaqi kaam: [docs/backlog.md](docs/backlog.md).
 
 ## Repo ka structure
 
@@ -60,9 +60,20 @@ lab-infra/
 ├── docs/
 │   ├── phase0.md           # Phase 0 ka har step: kya, kyun, production ahmiyat, verify, interview Q&A
 │   ├── phase1.md           # Phase 1 (kubeadm cluster): har step + kubeadm config ke har field ka matlab
+│   ├── phase2.md           # Phase 2 (registry): TLS/CA chain of trust, SAN, htpasswd vs Harbor vs ECR, imagePullSecret
+│   ├── phase3.md           # Phase 3 (k3s + Argo CD): hub-and-spoke, k3s vs kubeadm, TLS at ingress, contexts
 │   └── backlog.md          # baad mein karne wale kaam (checkboxes)
 ├── pki/
 │   └── lab-root-ca.crt     # Lab Root CA ka PUBLIC certificate (secret nahi). Private key SIRF s4:/root/lab-ca/ca.key
+├── phase3/
+│   ├── versions.sh         # k3s, helm, argo-cd chart/app versions + settings
+│   ├── k3s.sh              # config.yaml → k3s install (pinned) → verify                (s3)
+│   ├── kubeconfig-s1.sh    # ~/.kube/config: contexts lab-workload + lab-mgmt (600)      (s1)
+│   ├── argocd-cert.sh      # key+CSR s3 pe, Lab CA sign s4 pe, cert wapas s3            (s1 → s3, s4)
+│   ├── argocd/values.yaml  # Argo CD Helm values (bina secrets; resources ki wajah docs mein)
+│   ├── argocd-install.sh   # helm (pinned) + TLS Secret + helm upgrade --install         (s3)
+│   ├── argocd-cli.sh       # argocd CLI (= server version), login, admin password        (s1)
+│   └── verify.sh           # 8 tests
 ├── phase2/
 │   ├── versions.sh         # registry image (tag+digest), Docker CE versions, CA settings
 │   ├── lab-ca.sh           # Lab Root CA + registry.lab.local server cert            (s4)
