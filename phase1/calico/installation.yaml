@@ -1,0 +1,21 @@
+# installation.yaml — Calico (Tigera operator) ka hamara config. Upstream custom-resources.yaml (v3.33.0)
+# se banaya, lekin:
+#   - cidr 192.168.0.0/16 (upstream default) → 10.244.0.0/16, kyunke 192.168.0.0/16 hamare LAN
+#     192.168.2.0/24 ko overlap karta hai (aur kubeadm podSubnet bhi 10.244.0.0/16 hai).
+#   - nodeAddressAutodetectionV4: ens33 (node ka IP sahi interface se uthe).
+#   - APIServer, Goldmane, Whisker resources SHAMIL NAHI (optional; abhi nahi chahiye).
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+      - name: default-ipv4-ippool
+        blockSize: 26
+        cidr: 10.244.0.0/16
+        encapsulation: VXLANCrossSubnet
+        natOutgoing: Enabled
+        nodeSelector: all()
+    nodeAddressAutodetectionV4:
+      interface: "ens33"

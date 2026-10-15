@@ -1,0 +1,17 @@
+# kubeadm-join.yaml.tmpl — s2 (worker) ka JoinConfiguration TEMPLATE.
+# ⚠️ Is file mein asli token/hash KABHI nahi. join-worker.sh runtime pe __TOKEN__ aur __CA_HASH__
+#    bhar kar node ki /root/ mein (600) likhti hai, join ke baad delete kar deti hai.
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: "k8s-api.lab.local:6443"   # controlPlaneEndpoint (IP nahi, naam)
+    token: "__TOKEN__"                            # kam-umr bootstrap token (runtime pe)
+    caCertHashes:
+      - "__CA_HASH__"                             # cluster CA ki public key ka sha256 (MITM se bachao)
+nodeRegistration:
+  name: "__NODE__"
+  criSocket: unix:///run/containerd/containerd.sock
+  kubeletExtraArgs:
+    - name: node-ip
+      value: "__NODE_IP__"

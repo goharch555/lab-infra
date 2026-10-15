@@ -37,14 +37,14 @@ gateway aur DNS dono `192.168.2.2`.
 
 | Phase | Kaam | Status |
 |-------|------|--------|
-| **0** | Node preparation: hostname, `/etc/hosts`, static IP, UTC + chrony, OS update, swap/kernel prereqs, (SSH hardening alag) | ✅ (SSH hardening baaqi — Windows key login confirm hone ke baad) |
-| 1 | Container runtime (containerd) + kubeadm se workload cluster (s1 + s2) | ⏳ |
-| 2 | CNI (pod network) + basic cluster checks | ⏳ |
-| 3 | s3 pe k3s management cluster + Argo CD | ⏳ |
-| 4 | s4 pe container registry + CI runner | ⏳ |
-| 5 | GitOps: Argo CD se workload cluster pe apps deploy | ⏳ |
+| **0** | Node preparation: hostname, `/etc/hosts`, static IP, UTC + chrony, OS update, swap/kernel prereqs, disk extend, sudoers, netplan MAC match | ✅ (SSH hardening baaqi: [backlog](docs/backlog.md)) |
+| **1** | kubeadm workload cluster (s1 control-plane + s2 worker): containerd 2.4.2, Kubernetes v1.37.1, Calico v3.33.0, etcd backup | ✅ [docs/phase1.md](docs/phase1.md) |
+| 2 | s3 pe k3s management cluster + Argo CD | ⏳ |
+| 3 | s4 pe container registry + CI runner | ⏳ |
+| 4 | GitOps: Argo CD se workload cluster pe apps deploy | ⏳ |
+| 5 | Observability (metrics-server, monitoring, logging) aur ingress/gateway | ⏳ |
 
-> Phase 1 se aage ki list plan hai — waqt ke saath badal sakti hai.
+> Phase 2 se aage ki list plan hai, waqt ke saath badal sakti hai. Baaqi kaam: [docs/backlog.md](docs/backlog.md).
 
 ## Repo ka structure
 
@@ -53,7 +53,22 @@ lab-infra/
 ├── README.md               # ye file
 ├── .gitignore              # secrets ko commit hone se rokta hai
 ├── docs/
-│   └── phase0.md           # Phase 0 ka har step: kya, kyun, production ahmiyat, verify, interview Q&A
+│   ├── phase0.md           # Phase 0 ka har step: kya, kyun, production ahmiyat, verify, interview Q&A
+│   ├── phase1.md           # Phase 1 (kubeadm cluster): har step + kubeadm config ke har field ka matlab
+│   └── backlog.md          # baad mein karne wale kaam (checkboxes)
+├── phase1/
+│   ├── versions.sh         # saare pinned versions + cluster settings aik jagah
+│   ├── k8s-packages.sh     # kubelet/kubeadm/kubectl/cri-tools pinned + hold        (s1, s2)
+│   ├── containerd.sh       # containerd.io + config.toml + crictl                    (s1, s2)
+│   ├── kubeadm-config.yaml # Init/Cluster/KubeletConfiguration (koi secret nahi)
+│   ├── init-control-plane.sh # validate → dry-run → kubeadm init → kubeconfig        (s1)
+│   ├── calico/             # v3.33.0 manifests (pinned + SHA256SUMS) + installation.yaml
+│   ├── install-calico.sh   # Tigera operator + Installation
+│   ├── kubeadm-join.yaml.tmpl # JoinConfiguration TEMPLATE (token runtime pe; kabhi commit nahi)
+│   ├── join-worker.sh      # s2 join (runtime token, dry-run, cleanup)
+│   ├── approve-kubelet-csrs.sh # kubelet-serving CSRs (requester + SAN checks)
+│   ├── etcd-backup.sh      # etcdctl/etcdutl + roz snapshot timer (7 din retention)
+│   └── verify.sh           # 7 tests (phase1-test namespace, aakhir mein delete)
 └── phase0/
     ├── inventory.sh        # nodes, IPs, gateway, DNS — aik jagah
     ├── 00-sudo-nopasswd.sh # gohar ko passwordless sudo (aik dafa, interactive)
@@ -78,3 +93,12 @@ for ip in 192.168.2.1{1..4}; do ssh gohar@$ip 'bash -s' < verify.sh; done   # re
 ```
 
 Tafseel: [docs/phase0.md](docs/phase0.md)
+
+## Phase 1 kaise chalayein
+
+Tarteeb aur commands: [docs/phase1.md → "Kaise chalayein"](docs/phase1.md#kaise-chalayein-naye-machines-pe-tarteeb-se).
+
+```bash
+kubectl get nodes -o wide          # s1 (control-plane), s2 (worker)
+bash ~/lab-infra/phase1/verify.sh  # 7 tests
+```

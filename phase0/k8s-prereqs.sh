@@ -59,8 +59,9 @@ fi
 # Abhi load karo (modprobe already-loaded module pe kuch nahi karta)
 modprobe overlay
 modprobe br_netfilter
-lsmod | grep -qw overlay      || fail "overlay load nahi hua"
-lsmod | grep -qw br_netfilter || fail "br_netfilter load nahi hua"
+mods="$(lsmod)"   # pehle variable mein: "lsmod | grep -q" pipefail ke saath SIGPIPE se ghalat fail de sakta hai
+grep -qw overlay <<<"$mods"      || fail "overlay load nahi hua"
+grep -qw br_netfilter <<<"$mods" || fail "br_netfilter load nahi hua"
 log "verify: overlay + br_netfilter loaded"
 
 # =============================================================================

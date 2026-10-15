@@ -31,7 +31,7 @@ check() {
   ! grep -E "^${f}:" <<<"$out" | grep -qv "parsed OK"
 }
 # LOGIN_USER ka passwordless sudo abhi bhi chal raha hai?
-nopasswd_ok() { sudo -l -U "$LOGIN_USER" 2>/dev/null | grep -q "NOPASSWD: ALL"; }
+nopasswd_ok() { grep -q "NOPASSWD: ALL" <<<"$(sudo -l -U "$LOGIN_USER" 2>/dev/null)"; }
 
 # --- Step A: har file 0440 root:root ------------------------------------------
 for f in "$DIR"/*; do

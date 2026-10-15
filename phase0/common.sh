@@ -26,6 +26,17 @@ fail() { echo "[${NODE}] [common] ERROR: $*" >&2; exit 1; }
 IP="${NODE_IP[$NODE]}"
 export DEBIAN_FRONTEND=noninteractive
 APT_OPTS=(-y -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+# apt ke locks khaali hone ka intezar (max 5 min). Boot ke baad apt-daily/unattended-upgrades chal sakte
+# hain; "DPkg::Lock::Timeout" sirf dpkg lock pe lagta hai, "apt-get update" wale lists lock pe nahi.
+wait_apt_locks() {
+  local i
+  for i in $(seq 1 60); do
+    fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1 || return 0
+    [[ $i -eq 1 ]] && log "apt doosre process (apt-daily?) ke paas hai — intezar"
+    sleep 5
+  done
+  fail "5 min baad bhi apt lock khaali nahi"
+}
 
 # Interface ka naam confirm karo: sirf wo interface jis pe is node ka IP laga hai
 mapfile -t IFACES < <(ip -o -4 addr show | awk -v ip="$IP" '{split($4,a,"/"); if (a[1]==ip) print $2}')
@@ -121,7 +132,7 @@ fi
 other_yaml="$(find /etc/netplan -maxdepth 1 -name '*.yaml' ! -path "$NETPLAN_FILE" | wc -l)"
 current="$(cat "$NETPLAN_FILE" 2>/dev/null || true)"
 if [[ "$current" == "$DESIRED_NETPLAN" && "$other_yaml" -eq 0 ]] \
-   && ! ip -4 addr show dev "$IFACE" | grep -q dynamic; then
+   && ! grep -q dynamic <<<"$(ip -4 addr show dev "$IFACE")"; then
   log "static IP pehle se laga hua hai"
 else
   # Purani netplan files ka backup (rollback isi se hoga)
@@ -155,12 +166,12 @@ fi
 # Verify: address "dynamic" nahi hona chahiye, default route gateway pe
 # (networkd ko route lagane mein 1-2 second lag sakte hain, is liye 15s tak intezar)
 for _ in $(seq 1 15); do
-  ip -4 route show default | grep -q "via ${GATEWAY} dev ${IFACE}" && break
+  grep -q "via ${GATEWAY} dev ${IFACE}" <<<"$(ip -4 route show default)" && break
   sleep 1
 done
-ip -4 addr show dev "$IFACE" | grep -q "inet ${IP}/${PREFIX}" || fail "${IFACE} pe ${IP}/${PREFIX} nahi mila"
-! ip -4 addr show dev "$IFACE" | grep -q dynamic || fail "${IFACE} pe address abhi bhi dynamic hai"
-ip -4 route show default | grep -q "via ${GATEWAY} dev ${IFACE}" || fail "default route ${GATEWAY} pe nahi"
+grep -q "inet ${IP}/${PREFIX}" <<<"$(ip -4 addr show dev "$IFACE")" || fail "${IFACE} pe ${IP}/${PREFIX} nahi mila"
+! grep -q dynamic <<<"$(ip -4 addr show dev "$IFACE")" || fail "${IFACE} pe address abhi bhi dynamic hai"
+grep -q "via ${GATEWAY} dev ${IFACE}" <<<"$(ip -4 route show default)" || fail "default route ${GATEWAY} pe nahi"
 log "verify: ${IFACE} static ${IP}/${PREFIX}, default via ${GATEWAY}"
 
 fi
@@ -179,8 +190,8 @@ else
 fi
 
 # chrony install (ye systemd-timesyncd ko khud hata deta hai)
-if ! dpkg-query -W -f='${Status}' chrony 2>/dev/null | grep -q "install ok installed"; then
-  apt-get update -o DPkg::Lock::Timeout=300
+if [[ "$(dpkg-query -W -f='${Status}' chrony 2>/dev/null || true)" != "install ok installed" ]]; then
+  wait_apt_locks; apt-get update -o DPkg::Lock::Timeout=300
   apt-get install "${APT_OPTS[@]}" chrony
   log "chrony install kiya"
 fi
@@ -201,7 +212,7 @@ fi
 # Step 4: OS update + base packages
 # =============================================================================
 if want packages; then
-apt-get update -o DPkg::Lock::Timeout=300
+wait_apt_locks; apt-get update -o DPkg::Lock::Timeout=300
 apt-get full-upgrade "${APT_OPTS[@]}"
 apt-get install "${APT_OPTS[@]}" curl ca-certificates gnupg git jq vim bash-completion
 apt-get autoremove "${APT_OPTS[@]}"

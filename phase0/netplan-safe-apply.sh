@@ -36,7 +36,7 @@ netplan apply || rollback
 # (Sirf ping kafi nahi: gateway same subnet mein hai, route lagne se pehle bhi ping ho jata hai.)
 start=$SECONDS
 while (( SECONDS - start < TIMEOUT )); do
-  if ip -4 route show default | grep -q "via ${GW} " && ping -c1 -W1 "$GW" >/dev/null 2>&1; then
+  if grep -q "via ${GW} " <<<"$(ip -4 route show default)" && ping -c1 -W1 "$GW" >/dev/null 2>&1; then
     log "OK: default route + gateway ${GW} $((SECONDS - start))s mein mil gaye"
     exit 0
   fi

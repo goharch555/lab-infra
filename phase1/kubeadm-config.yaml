@@ -1,0 +1,41 @@
+# kubeadm-config.yaml — workload cluster (lab-workload) ka control-plane config.
+# Istemaal: init-control-plane.sh  (kubeadm init --config kubeadm-config.yaml)
+#
+# ⚠️ Is file mein koi secret NAHI hai, aur hona bhi nahi chahiye:
+#    - bootstrapTokens yahan nahi likhe; kubeadm khud random token banata hai (24h TTL).
+#    - certificateKey nahi (hum --upload-certs use nahi karte; abhi aik hi control-plane hai).
+# Har field ka matlab: docs/phase1.md → "kubeadm config file".
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: 192.168.2.11      # API server is IP pe sunta/announce karta hai
+  bindPort: 6443
+nodeRegistration:
+  name: s1                            # Kubernetes mein node ka naam
+  criSocket: unix:///run/containerd/containerd.sock
+  imagePullPolicy: IfNotPresent
+  kubeletExtraArgs:
+    - name: node-ip                   # kubelet node ka yahi IP report kare (andaza na lagaye)
+      value: 192.168.2.11
+  # taints: yahan kuch NAHI likha → kubeadm default taint lagata hai:
+  #   node-role.kubernetes.io/control-plane:NoSchedule  (s1 pe apps nahi chalengi)
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+clusterName: lab-workload
+kubernetesVersion: v1.37.1
+controlPlaneEndpoint: "k8s-api.lab.local:6443"   # IP nahi, DNS naam (baad mein LB/HA ke liye)
+networking:
+  podSubnet: 10.244.0.0/16           # Pods ke IPs (Calico IP pool bhi yahi)
+  serviceSubnet: 10.96.0.0/12        # ClusterIP Services ke IPs
+  dnsDomain: cluster.local
+apiServer:
+  certSANs:                          # API server certificate in naamon/IPs ke liye valid ho
+    - k8s-api.lab.local
+    - 192.168.2.11
+    - s1
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd                # containerd ke SystemdCgroup=true se match
+serverTLSBootstrap: true             # kubelet ka serving cert cluster CA se (CSR approval chahiye)
