@@ -1,0 +1,42 @@
+# config.yml — distribution registry v3 (registry.lab.local). REPO MEIN HAI: koi secret nahi.
+#   - http.secret yahan NAHI: REGISTRY_HTTP_SECRET env (registry.env, 600, sirf s4 pe) se aata hai.
+#   - htpasswd file (/auth/htpasswd) aur TLS key (/certs/registry.key) sirf s4 pe.
+# Docs: https://github.com/distribution/distribution/blob/v3.1.2/docs/content/about/configuration.md
+version: 0.1
+log:
+  level: info                      # image ka default "debug" hai — production mein nahi
+  formatter: text
+  fields:
+    service: registry
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: true                  # manifests/blobs digest se delete ho sakein (GC ke liye zaroori)
+  cache:
+    blobdescriptor: inmemory
+  maintenance:
+    uploadpurging:                 # adhoore uploads saaf
+      enabled: true
+      age: 168h
+      interval: 24h
+      dryrun: false
+http:
+  addr: :5000                      # container ke andar; host pe 443 → 5000 (compose.yaml)
+  host: https://registry.lab.local
+  tls:
+    certificate: /certs/registry.crt
+    key: /certs/registry.key
+    minimumtls: tls1.2
+  headers:
+    X-Content-Type-Options: [nosniff]
+  # debug server (:5001) jaan-boojh kar NAHI (image default mein on hai)
+auth:
+  htpasswd:
+    realm: "Lab Registry"
+    path: /auth/htpasswd           # sirf bcrypt entries maani jati hain; file startup pe load hoti hai
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3

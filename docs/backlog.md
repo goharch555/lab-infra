@@ -5,11 +5,11 @@
 ## Security
 - [ ] **SSH hardening**: `phase0/ssh-hardening.sh --i-confirmed-key-login` chalana hai. Pehle confirm karo
       ke **Windows se har node** (s1–s4) pe key se login chal raha hai. Aik session khula rakh kar chalao.
-- [ ] **etcd encryption at rest**: Secrets abhi etcd (aur snapshots) mein plain hain. `EncryptionConfiguration`
-      (aescbc/kms) lagao, phir saare Secrets dobara likho.
-- [ ] **Calico APIServer ka faisla**: `tigerastatus tiers` "Degraded: Waiting for Tigera API server" hai, kyunke
-      APIServer install nahi kiya. Network policy ke `projectcalico.org/v3` resources (tiers, GlobalNetworkPolicy)
-      chahiye hon to `APIServer` resource add karo; warna is status ko document karke chhor do.
+- [ ] **[Phase 6] etcd encryption at rest**: Secrets abhi etcd (aur snapshots) mein plain hain.
+      `EncryptionConfiguration` (aescbc/kms) lagao, phir saare Secrets dobara likho.
+- [ ] **Calico APIServer** *(faisla 2026-10-15: abhi NAHI)*: `tigerastatus tiers` "Degraded: Waiting for Tigera
+      API server" rahega. Hum **Kubernetes NetworkPolicy** use karenge, Calico ke `projectcalico.org/v3` tiers nahi.
+      Tiers/GlobalNetworkPolicy chahiye hon tab `APIServer` resource add karna.
 
 ## Kubernetes / Phase 1 ke baad
 - [ ] **kubelet-serving CSR approval automate karna**: abhi `phase1/approve-kubelet-csrs.sh` haath se chalti hai
@@ -17,7 +17,7 @@
       controller (wohi checks: requester `system:node:<naam>`, SANs sirf node ka naam/IP).
 - [ ] **etcd restore drill**: `docs/phase1.md` §7 wala restore asal mein chala kar dekho (VM snapshot ke
       baad, ya alag test cluster pe). Waqt note karo.
-- [ ] **etcd backups node se bahar**: abhi sirf s1 ki disk pe (`/var/backups/etcd`). s4 ya NAS pe copy (encrypted).
+- [ ] **[Phase 6] etcd backups node se bahar**: abhi sirf s1 ki disk pe (`/var/backups/etcd`). s4 ya NAS pe copy (encrypted).
 - [ ] **`/etc/kubernetes/pki` ka backup**: CA keys etcd mein nahi; control-plane dobara banane ke liye zaroori.
       (⚠️ Kabhi git mein nahi.)
 - [ ] **kubelet `systemReserved`/`kubeReserved`** aur **graceful node shutdown** (`shutdownGracePeriod`):
@@ -29,5 +29,17 @@
 - [ ] **VMware DHCP range `.100–.253`**: taake static IPs (.11–.14) se kabhi takraav na ho.
 - [ ] **pcnet32 → vmxnet3** (agar ab tak nahi hua): netplan pehle se MAC match + `set-name: ens33` pe hai
       (Phase 0 Step 12). Aik node aik waqt mein, pehle s4. Baad mein MAC check karo.
-- [ ] **s2 (worker) ka CPU 2 → 4**: s1 pe 2 vCPU mein Calico startup ne node bitha diya tha. s2 abhi theek hai,
-      lekin apps aane pe dekhna.
+- [ ] **s2 (worker) ka CPU 2 → 4: apps se pehle 4 vCPU** *(faisla 2026-10-15)*. s1 pe 2 vCPU mein Calico
+      startup ne node bitha diya tha. Pehli app deploy karne se pehle s2 ko 4 vCPU dena hai.
+
+## Registry (Phase 2 ke baad)
+- [ ] **Registry server cert renewal**: `registry.lab.local` cert **Oct 15, 2027** ko expire hoga. `phase2/lab-ca.sh`
+      (30 din pehle khud naya banati hai) + `registry.sh` + reminder/alert. Lab Root CA: Oct 2036.
+- [ ] **Lab CA private key ka backup** (offline, encrypted): s4 ki disk gayi to naye certs ke liye nayi CA + har node pe trust dobara.
+- [ ] **Pull-only credentials / RBAC**: htpasswd mein `k8s-pull` bhi push kar sakta hai. Zaroorat ho to Harbor
+      (robot accounts, scanning) pe jana.
+- [ ] **Cached images ke liye auth**: `AlwaysPullImages` admission ya kubelet ka "ensure secret pulled images"
+      feature dekhna (multi-tenant ho to zaroori).
+- [ ] **Registry data backup** (`/srv/registry/data`) aur GC ka schedule (registry read-only window mein).
+- [ ] **Docker group**: `gohar` docker group mein hai (= root). CI runner ke liye alag user / rootless builder (Phase 4).
+

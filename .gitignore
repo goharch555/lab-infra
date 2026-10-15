@@ -21,3 +21,17 @@ secrets/
 # Logs (in mein IPs ke ilawa machine ki details hoti hain; repo mein zaroorat nahi)
 logs/
 *.log
+
+# Phase 2 (registry): CA/server keys, htpasswd, passwords, docker login — KABHI commit nahi
+*.crt.new
+*.key.new
+*.csr
+*.srl
+htpasswd
+*.htpasswd
+registry-credentials/
+*.password
+registry.env
+.docker/
+# Public CA certificate commit karna THEEK hai (ye secret nahi):
+!pki/lab-root-ca.crt

@@ -1,0 +1,28 @@
+# compose.yaml — registry.lab.local (s4). REPO MEIN HAI: koi secret nahi.
+# s4 pe /srv/registry/ mein: compose.yaml, config.yml, registry.env (600), certs/, auth/, data/
+# Image tag + digest pinned (phase2/versions.sh ke REGISTRY_IMAGE se match — registry.sh check karti hai).
+name: registry
+services:
+  registry:
+    image: registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+    restart: always
+    ports:
+      - "443:5000"                 # HTTPS (TLS registry khud karta hai)
+    env_file:
+      - registry.env               # REGISTRY_HTTP_SECRET (s4 pe registry.sh banati hai, 600)
+    volumes:
+      - ./config.yml:/etc/distribution/config.yml:ro
+      - ./certs:/certs:ro
+      - ./auth:/auth:ro
+      - ./data:/var/lib/registry
+    read_only: true                # container ka root filesystem read-only (sirf data volume + /tmp likhne ke liye)
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

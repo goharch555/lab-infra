@@ -3,6 +3,9 @@
 Mere ghar ke lab ka **Infrastructure as Code** repo. Is mein har node ko tayyar karne wali scripts
 aur un ki documentation hai (Roman Urdu mein, taake revision asaan ho).
 
+> 🔐 **`pki/lab-root-ca.crt` public hai** (har node ko trust ke liye dena hota hai). Iski **private key**
+> sirf s4 pe `/root/lab-ca/ca.key` (700/600) mein hai, aur kabhi repo ya kisi aur machine pe nahi jayegi.
+>
 > ⚠️ **Ye repo PUBLIC hai.** Is mein kabhi koi password, private key, token, kubeconfig ya
 > certificate ki private key commit nahi karni. `.gitignore` in cheezon ko rokta hai, lekin har
 > commit se pehle `git diff --cached` khud zaroor dekho.
@@ -39,12 +42,14 @@ gateway aur DNS dono `192.168.2.2`.
 |-------|------|--------|
 | **0** | Node preparation: hostname, `/etc/hosts`, static IP, UTC + chrony, OS update, swap/kernel prereqs, disk extend, sudoers, netplan MAC match | ✅ (SSH hardening baaqi: [backlog](docs/backlog.md)) |
 | **1** | kubeadm workload cluster (s1 control-plane + s2 worker): containerd 2.4.2, Kubernetes v1.37.1, Calico v3.33.0, etcd backup | ✅ [docs/phase1.md](docs/phase1.md) |
-| 2 | s3 pe k3s management cluster + Argo CD | ⏳ |
-| 3 | s4 pe container registry + CI runner | ⏳ |
-| 4 | GitOps: Argo CD se workload cluster pe apps deploy | ⏳ |
-| 5 | Observability (metrics-server, monitoring, logging) aur ingress/gateway | ⏳ |
+| **2** | s4 pe secure container registry: Lab Root CA, TLS, htpasswd auth, Docker CE; s1/s2/s4 pe CA trust + containerd `hosts.toml` | ✅ [docs/phase2.md](docs/phase2.md) |
+| 3 | s3 pe k3s management cluster + Argo CD | ⏳ |
+| 4 | CI runner (s4) + GitOps: Argo CD se workload cluster pe apps deploy | ⏳ |
+| 5 | Sealed Secrets (imagePullSecret waghera git se, encrypted) | ⏳ |
+| 6 | Hardening: etcd encryption at rest, off-node backups ([backlog](docs/backlog.md)) | ⏳ |
+| 7 | Observability (metrics-server, monitoring, logging) aur ingress/gateway | ⏳ |
 
-> Phase 2 se aage ki list plan hai, waqt ke saath badal sakti hai. Baaqi kaam: [docs/backlog.md](docs/backlog.md).
+> Phase 3 se aage ki list plan hai, waqt ke saath badal sakti hai. Baaqi kaam: [docs/backlog.md](docs/backlog.md).
 
 ## Repo ka structure
 
@@ -56,6 +61,16 @@ lab-infra/
 │   ├── phase0.md           # Phase 0 ka har step: kya, kyun, production ahmiyat, verify, interview Q&A
 │   ├── phase1.md           # Phase 1 (kubeadm cluster): har step + kubeadm config ke har field ka matlab
 │   └── backlog.md          # baad mein karne wale kaam (checkboxes)
+├── pki/
+│   └── lab-root-ca.crt     # Lab Root CA ka PUBLIC certificate (secret nahi). Private key SIRF s4:/root/lab-ca/ca.key
+├── phase2/
+│   ├── versions.sh         # registry image (tag+digest), Docker CE versions, CA settings
+│   ├── lab-ca.sh           # Lab Root CA + registry.lab.local server cert            (s4)
+│   ├── docker.sh           # Docker CE pinned + hold, gohar → docker group (= root!)  (s4)
+│   ├── registry/           # compose.yaml + config.yml (BINA secrets)
+│   ├── registry.sh         # passwords, htpasswd, certs, docker compose up            (s4)
+│   ├── trust-ca.sh         # CA trust + Docker certs.d / containerd hosts.toml       (s4, s1, s2)
+│   └── verify.sh           # 5 tests (curl 401, chain, push, k8s pull ±secret, logout)
 ├── phase1/
 │   ├── versions.sh         # saare pinned versions + cluster settings aik jagah
 │   ├── k8s-packages.sh     # kubelet/kubeadm/kubectl/cri-tools pinned + hold        (s1, s2)
