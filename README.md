@@ -44,12 +44,13 @@ gateway aur DNS dono `192.168.2.2`.
 | **1** | kubeadm workload cluster (s1 control-plane + s2 worker): containerd 2.4.2, Kubernetes v1.37.1, Calico v3.33.0, etcd backup | ✅ [docs/phase1.md](docs/phase1.md) |
 | **2** | s4 pe secure container registry: Lab Root CA, TLS, htpasswd auth, Docker CE; s1/s2/s4 pe CA trust + containerd `hosts.toml` | ✅ [docs/phase2.md](docs/phase2.md) |
 | **3** | s3 pe k3s management cluster (v1.36.5+k3s1) + Argo CD v3.5.5 (Helm, Traefik TLS, Lab CA cert); s1 = admin workstation (contexts `lab-workload`, `lab-mgmt`) | ✅ [docs/phase3.md](docs/phase3.md) |
-| 4 | Workload cluster ko Argo CD (hub) mein register + CI runner (s4) + GitOps se apps deploy | ⏳ |
+| **4a** | Workload cluster Argo CD (hub) mein registered (`lab-workload`), k3s CoreDNS mein `lab.local`, private repo `platform-gitops` (read-only deploy key) | ✅ [docs/phase4.md](docs/phase4.md) |
+| 4b | AppProject + Applications (GitOps se pehli apps), CI runner (s4) | ⏳ |
 | 5 | Sealed Secrets (imagePullSecret waghera git se, encrypted) | ⏳ |
 | 6 | Hardening: etcd encryption at rest, off-node backups ([backlog](docs/backlog.md)) | ⏳ |
 | 7 | Observability (metrics-server, monitoring, logging) aur ingress/gateway | ⏳ |
 
-> Phase 4 se aage ki list plan hai, waqt ke saath badal sakti hai. Baaqi kaam: [docs/backlog.md](docs/backlog.md).
+> Phase 4b se aage ki list plan hai, waqt ke saath badal sakti hai. Baaqi kaam: [docs/backlog.md](docs/backlog.md).
 
 ## Repo ka structure
 
@@ -62,9 +63,16 @@ lab-infra/
 │   ├── phase1.md           # Phase 1 (kubeadm cluster): har step + kubeadm config ke har field ka matlab
 │   ├── phase2.md           # Phase 2 (registry): TLS/CA chain of trust, SAN, htpasswd vs Harbor vs ECR, imagePullSecret
 │   ├── phase3.md           # Phase 3 (k3s + Argo CD): hub-and-spoke, k3s vs kubeadm, TLS at ingress, contexts
+│   ├── phase4.md           # Phase 4a: pods ka DNS (CoreDNS), argocd cluster add, deploy key, lab-infra vs platform-gitops
 │   └── backlog.md          # baad mein karne wale kaam (checkboxes)
 ├── pki/
 │   └── lab-root-ca.crt     # Lab Root CA ka PUBLIC certificate (secret nahi). Private key SIRF s4:/root/lab-ca/ca.key
+├── phase4/
+│   ├── coredns-custom.yaml # k3s CoreDNS: lab.local zone (alag server block)
+│   ├── coredns-lab-local.sh # coredns-custom apply + pod se DNS/API test                 (s1 → lab-mgmt)
+│   ├── register-cluster.sh # argocd cluster add lab-workload (login prompt pe)           (s1)
+│   ├── repo-credentials.sh # read-only deploy key + declarative repository Secret       (s1 → lab-mgmt)
+│   └── verify.sh           # 7 tests (asal read-only push test samet)
 ├── phase3/
 │   ├── versions.sh         # k3s, helm, argo-cd chart/app versions + settings
 │   ├── k3s.sh              # config.yaml → k3s install (pinned) → verify                (s3)

@@ -1,0 +1,25 @@
+# coredns-custom.yaml — k3s (lab-mgmt, s3) CoreDNS mein "lab.local" ke naam.
+# k3s ki apni "coredns" ConfigMap EDIT NAHI karte (k3s usay overwrite karta hai). k3s ka Corefile
+# ye files import karta hai:  /etc/coredns/custom/*.override (main block ke andar) aur *.server (alag block).
+# Main block mein pehle se aik "hosts" plugin (NodeHosts) hai — aik block mein hosts do dafa nahi aa sakta,
+# is liye *.override NAHI, balke "lab.local" zone ka ALAG server block (*.server).
+# Pods node ki /etc/hosts nahi parhte — is liye ye zaroori hai (docs/phase4.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/managed-by: lab-infra-phase4
+data:
+  lab-local.server: |
+    lab.local:53 {
+        errors
+        cache 30
+        hosts {
+            192.168.2.11 k8s-api.lab.local
+            192.168.2.13 argocd.lab.local
+            192.168.2.14 registry.lab.local
+            ttl 60
+        }
+    }

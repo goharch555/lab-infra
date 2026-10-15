@@ -60,3 +60,20 @@
 - [ ] **Management cluster backup**: k3s datastore (`k3s etcd-snapshot` ya sqlite backup) + Argo CD config
       (`argocd admin export`). Hub gaya to sab spokes ka control gaya.
 
+## GitOps (Phase 4a ke baad)
+- [ ] **Argo CD ki workload credential: admin cert → argocd-manager token** *(faisla 2026-10-15: abhi jaisa hai)*.
+      `argocd cluster add` (v3.5.5) ne cluster Secret mein s1 kubeconfig ka `kubernetes-admin` client cert/key rakha
+      (revoke nahi ho sakta, Oct 14, 2027 tak valid; audit mein insaan aur Argo CD ka farq nahi). Badalna: cluster
+      Secret `config` = argocd-manager-long-lived-token ka `bearerToken` + `caData` (stdin se, declarative), cert/key
+      hatao, `argocd cluster get` Successful. Phir admin cert ki rotation (`kubeadm certs renew admin.conf`) bhi socho.
+- [ ] **argocd-manager ki permissions scoped karna**: abhi workload cluster mein `argocd-manager-role` = `*/*/*`
+      (cluster-admin). Options: `argocd cluster add --namespace ...` (sirf chund namespaces), ya apna ServiceAccount +
+      custom ClusterRole (`--service-account`), aur AppProject mein `clusterResourceWhitelist`. Long-lived token ki
+      rotation bhi.
+- [ ] **Deploy key rotation** (platform-gitops): nayi ED25519 key → GitHub pe read-only add → `repo-credentials.sh`
+      (Secret update) → `argocd repo list` Successful → `verify.sh` (read-only push test) → purani key GitHub se delete.
+      Backup: s1 `/root/argocd-repo-key/`.
+- [ ] **Real internal DNS**: abhi `lab.local` teen jagah haath se hai (har node ki `/etc/hosts`, k3s `coredns-custom`).
+      Aik internal DNS server (misal CoreDNS/PowerDNS/BIND on s4, ya router) + VMware DHCP/netplan DNS us pe, aur k3s/
+      kubeadm CoreDNS mein `forward lab.local <dns>`.
+
