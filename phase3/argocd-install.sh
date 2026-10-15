@@ -40,7 +40,13 @@ kubectl create namespace "$ARGOCD_NS" --dry-run=client -o yaml | kubectl apply -
 before="$(kubectl -n "$ARGOCD_NS" get secret argocd-server-tls -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
 kubectl -n "$ARGOCD_NS" create secret tls argocd-server-tls --cert="$CRT" --key="$KEY" --dry-run=client -o yaml \
   | kubectl label --local -f - app.kubernetes.io/part-of=argocd app.kubernetes.io/managed-by=lab-infra-phase3 -o yaml \
-  | kubectl apply -f - >/dev/null
+  | kubectl apply --server-side --force-conflicts --field-manager=lab-infra-phase3 -f - >/dev/null
+# SERVER-SIDE apply: client-side "kubectl apply" poori object (private key samet) "last-applied-configuration"
+# annotation mein bhi likh deta hai — aur annotations "kubectl describe" mein dikhti hain. Purani annotation ho to hatao.
+if kubectl -n "$ARGOCD_NS" get secret argocd-server-tls -o json | jq -e '.metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]' >/dev/null; then
+  kubectl -n "$ARGOCD_NS" annotate secret argocd-server-tls kubectl.kubernetes.io/last-applied-configuration- >/dev/null
+  log "purani last-applied annotation (tls.key ki copy) hata di"
+fi
 after="$(kubectl -n "$ARGOCD_NS" get secret argocd-server-tls -o jsonpath='{.data.tls\.crt}')"
 [[ "$before" == "$after" ]] && log "Secret argocd-server-tls pehle se theek" || log "Secret argocd-server-tls (kubernetes.io/tls) banaya/update kiya"
 

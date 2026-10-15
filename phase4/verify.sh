@@ -47,16 +47,27 @@ ok=yes
 tok="$("${W[@]}" -n kube-system get secret argocd-manager-long-lived-token -o jsonpath='{.type}' 2>/dev/null)"
 echo "  sa/argocd-manager, clusterrole/argocd-manager-role, clusterrolebinding/argocd-manager-role-binding, secret type=${tok}"
 [[ "$ok" == yes && "$tok" == "kubernetes.io/service-account-token" ]] && pass "argocd-manager SA + ClusterRole + Binding + token Secret" || failt "argocd-manager resources"
-# Argo CD asal mein kaunsi credential use karta hai? (sirf QISM aur cert subject — value kabhi nahi)
-cfg="$("${M[@]}" -n "$ARGOCD_NS" get secret -l argocd.argoproj.io/secret-type=cluster -o json \
-       | jq -r --arg s "https://k8s-api.lab.local:6443" '.items[] | select((.data.server|@base64d)==$s) | .data.config | @base64d')"
-if [[ -n "$(jq -r '.bearerToken // empty' <<<"$cfg")" ]]; then
-  echo "  Argo CD credential: bearerToken (ServiceAccount token)"
+# Argo CD asal mein kaunsi credential use karta hai? (sirf QISM + TokenReview ka user — value kabhi nahi)
+cs_json="$("${M[@]}" -n "$ARGOCD_NS" get secret -l argocd.argoproj.io/secret-type=cluster -o json \
+          | jq --arg s "https://k8s-api.lab.local:6443" '.items[] | select((.data.server|@base64d)==$s)')"
+ckeys="$(jq -c '.data.config|@base64d|fromjson|{keys:keys, tls:((.tlsClientConfig // {})|keys)}' <<<"$cs_json")"
+echo "  cluster Secret config keys: ${ckeys}"
+if jq -e '.tls|index("certData") or index("keyData")' <<<"$ckeys" >/dev/null; then
+  failt "Argo CD credential: client certificate (certData/keyData) — argocd-manager token chahiye (phase4/use-sa-token.sh)"
+elif jq -e '.keys|index("bearerToken")' <<<"$ckeys" >/dev/null; then
+  # Token workload cluster ke TokenReview ko pipe se; jawab mein sirf user (TokenReview spec.token wapas bhejta hai — filter)
+  who="$(jq '{apiVersion:"authentication.k8s.io/v1",kind:"TokenReview",spec:{token:(.data.config|@base64d|fromjson|.bearerToken)}}' <<<"$cs_json" \
+         | "${W[@]}" create -f - -o json | jq -r '"\(.status.authenticated) \(.status.user.username)"')"
+  echo "  TokenReview: ${who}"
+  [[ "$who" == "true system:serviceaccount:kube-system:argocd-manager" ]] \
+    && pass "Argo CD credential: bearer token (argocd-manager)" || failt "bearer token argocd-manager ka nahi: ${who}"
 else
-  subj="$(jq -r '.tlsClientConfig.certData // empty' <<<"$cfg" | base64 -d 2>/dev/null | openssl x509 -noout -subject -enddate 2>/dev/null | xargs)"
-  echo "  Argo CD credential: client certificate — ${subj:-<nahi>}  (faisla: jaisa hai; backlog dekho)"
+  failt "Argo CD credential: na token na cert (${ckeys})"
 fi
-unset cfg
+unset cs_json
+# Argo CD Secrets pe last-applied annotation nahi honi chahiye (us mein key/token ki copy hoti hai)
+la="$("${M[@]}" -n "$ARGOCD_NS" get secret -o json | jq -r '.items[] | select(.metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]) | .metadata.name')"
+[[ -z "$la" ]] && pass "argocd namespace ke kisi Secret pe last-applied annotation nahi" || failt "last-applied annotation (secret copy): ${la//$'\n'/, }"
 
 # --- 5. Repository connection ------------------------------------------------------------------------------
 hdr "5. argocd repo list"

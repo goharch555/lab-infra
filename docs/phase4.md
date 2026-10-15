@@ -13,6 +13,7 @@ cluster pe sirf `argocd cluster add` ka kaam hua.
 |---|---|---|
 | `coredns-custom.yaml` + `coredns-lab-local.sh` | s1 → lab-mgmt | k3s CoreDNS mein `*.lab.local` naam |
 | `register-cluster.sh` | s1 → dono clusters | login (prompt pe), `argocd cluster add lab-workload` |
+| `use-sa-token.sh` | s1 → dono clusters | cluster Secret: admin cert → argocd-manager SA token (server-side apply) |
 | `repo-credentials.sh` | s1 → lab-mgmt | read-only deploy key + declarative repository Secret |
 | `verify.sh` | s1 | 7 tests |
 
@@ -20,8 +21,8 @@ cluster pe sirf `argocd cluster add` ka kaam hua.
 | Secret | Jagah |
 |---|---|
 | Deploy key (private) | s1: `/root/argocd-repo-key/platform-gitops` (700/600, backup) + s3: Secret `argocd/repo-platform-gitops` (k3s encrypted at rest) |
-| Workload cluster ki credential jo Argo CD **asal mein** use karta hai | s3: cluster Secret `argocd/cluster-k8s-api.lab.local-*` ka `config`: **`kubernetes-admin` client cert + key** (neeche ⚠️ dekho) |
-| argocd-manager token (bana, lekin istemal nahi) | workload: Secret `kube-system/argocd-manager-long-lived-token` |
+| Workload cluster ki credential jo Argo CD use karta hai | s3: cluster Secret `argocd/cluster-k8s-api.lab.local-*` ka `config`: **argocd-manager SA token** (`bearerToken`) + CA (§2a) |
+| argocd-manager token (asal) | workload: Secret `kube-system/argocd-manager-long-lived-token` |
 | Argo CD admin password | s1: `/root/argocd-admin-password` (600 root) |
 
 ---
@@ -111,39 +112,98 @@ Phir **s3 pe** (Argo CD ke API ke zariye) `argocd` namespace mein aik **cluster 
 
 Server URL wahi hai jo kubeconfig mein tha (`k8s-api.lab.local`), isi liye pehle CoreDNS wala kaam zaroori tha.
 
-### ⚠️ Asal mein Argo CD kaunsi credential use kar raha hai (hamari jaanch)
-Aam tor pe `config` mein argocd-manager SA ka **`bearerToken`** hota hai. Hamare cluster Secret mein (Argo CD v3.5.5)
-**`bearerToken` hai hi nahi**. `config` = `tlsClientConfig: {caData, certData, keyData, insecure: false}`, aur:
-- `certData` ka subject: **`O = kubeadm:cluster-admins, CN = kubernetes-admin`**, expiry **Oct 14, 2027**
-- `keyData` = s1 ki kubeconfig wali `kubernetes-admin` client key (sirf sha256 hash compare kiya, key print nahi)
+## 2a. Argo CD ki credential: admin cert → argocd-manager token (fix)
 
-Yani `cluster add` ne argocd-manager SA, ClusterRole, Binding aur token **banaye**, lekin Argo CD ko kubeconfig wali
-**admin ki certificate pehchan** de di. argocd-manager abhi **istemal nahi** ho raha.
+### Kya hua tha
+`cluster add` ke baad cluster Secret ke `config` mein **`bearerToken` tha hi nahi**. `config` =
+`tlsClientConfig: {caData, certData, keyData}`, aur `certData` = **`O=kubeadm:cluster-admins, CN=kubernetes-admin`**
+(s1 ki kubeconfig wali admin key, sha256 se match). Yani argocd-manager SA ban gaya, lekin Argo CD **admin ki
+pehchan** se ja raha tha.
 
-**Faisla (2026-10-15): jaisa hai rehne do** (lab). Khatra wazeh rahe:
-| | argocd-manager SA token (aam) | kubernetes-admin client cert (hamara) |
+### Kyun (Argo CD v3.5.5 ka source code)
+`cmd/argocd/commands/cluster.go`: `cluster add` pehle `clusterauth.InstallClusterManagerRBAC()` se argocd-manager
+SA + ClusterRole/Binding + token **banata** hai aur token wapas leta hai. Phir `cmd/util/cluster.go` ka `NewCluster()`
+kubeconfig context ki TLS config copy karta hai (CA, **cert, key**) aur:
+```go
+// Bearer token will preferentially be used for auth if present,
+// Even in presence of key/cert credentials
+// So set bearer token only if the key/cert data is absent
+if len(tlsClientConfig.CertData) == 0 || len(tlsClientConfig.KeyData) == 0 {
+    clst.Config.BearerToken = managerBearerToken
+}
+```
+kubeadm ki `admin.conf` **client-certificate** se login karti hai, is liye cert/key mojood the aur token **phenk diya gaya**.
+Ye koi flag ya bhool nahi, v3.5.5 ka design hai. Token wali kubeconfig (ya `--exec-command`) hoti to token rakha jata.
+**Sabaq:** `argocd cluster add` ke baad hamesha check karo ke Secret mein asal mein kaunsi credential hai.
+
+### Fix (`phase4/use-sa-token.sh`)
+1. Workload cluster se `kube-system/argocd-manager-long-lived-token` ke `token` aur `ca.crt` liye, **sirf pipe se**:
+   `kubectl get secret (dono) -o json | jq -s '…' | kubectl apply --server-side -f -`. Token/CA kabhi print
+   ya file mein nahi gaye.
+2. Cluster Secret ki **sirf `config`** key badli, aur `server`/`name`/labels wahi rahe:
+   `{"bearerToken": "<token>", "tlsClientConfig": {"insecure": false, "caData": "<base64 CA>"}}`
+3. **Server-side apply** (`--field-manager=lab-infra-phase4 --force-conflicts`), client-side nahi. Client-side
+   `kubectl apply` poori object (token samet) `kubectl.kubernetes.io/last-applied-configuration` annotation mein bhi
+   likh deta hai. Argo CD cluster Secret ki annotations `argocd cluster get` mein dikhata hai, aur `kubectl describe`
+   bhi annotations dikhata hai.
+4. Idempotent: token aur CA SA Secret se match karein (sirf compare) aur cert/key na hon, to kuch nahi badalta.
+
+### Verify (asal nateeja)
+- Cluster Secret `config` ki keys: **`["bearerToken","tlsClientConfig"]`**, `tlsClientConfig`: **`["caData","insecure"]`**.
+  **`certData`/`keyData` nahi.** Token = SA token, CA = SA ka `ca.crt` (sirf compare kiya).
+- **Pehchan ka saboot (TokenReview):** Secret wala token pipe se workload cluster ki TokenReview API ko diya:
+  `authenticated: true`, `username: system:serviceaccount:kube-system:argocd-manager`. (Sirf `.status` dikhaya,
+  kyunke TokenReview ka jawab `spec.token` wapas bhejta hai.)
+- `argocd cluster set lab-workload --name lab-workload`: Argo CD server **Secret wali credential** se workload API
+  call karta hai (`GetServerVersion`, source: *"Test the token we just created before persisting it"*) → **Successful**,
+  `insecure: false`, v1.37.1. ⚠️ Ye check `/version` pe hai, jo kubeadm cluster pe bina login ke bhi khulta hai.
+  Isi liye pehchan ka asal saboot TokenReview hai. Kuch der baad status phir **Unknown** ho gaya, kyunke koi
+  Application nahi aur Argo CD cluster ko monitor nahi karta.
+- `kubectl --context lab-workload auth can-i --list --as=system:serviceaccount:kube-system:argocd-manager`:
+  `*.* [*]` aur non-resource `[*]`, yani cluster-admin. Ye permissions abhi nahi badlin ([backlog](backlog.md)).
+- `argocd cluster get` ka text "oAuth authentication: false" dikhata hai, kyunke Argo CD API apne jawab mein token
+  chhupa deti hai. Ye display ki baat hai.
+- `verify.sh` test 4: credential client cert ho to **FAIL**. Bearer token ho to TokenReview se user
+  `argocd-manager` hona chahiye.
+
+### ⚠️ Purana admin certificate abhi bhi VALID hai
+Cert ki copy s3 ke Secret se **hat gayi**, lekin certificate khud **Oct 14, 2027 tak valid** hai, aur Kubernetes
+client certificates ko **revoke nahi kar sakta**. Jab tak wo Secret mein tha, s3 compromise ka matlab workload
+cluster ka admin cert leak ho sakta tha. k3s datastore ke purane snapshots/backups mein bhi (agar banaye gaye hon)
+wo ho sakta hai. Asli hal **cluster CA rotation** hai (saare certs dobara). Ye abhi nahi kiya, [backlog](backlog.md) mein hai.
+
+### SA token vs client certificate (aur audit identity)
+| | **SA token** (ab) | **Client certificate** (pehle) |
 |---|---|---|
-| Taqat | cluster-admin (ClusterRole `*/*/*`) | cluster-admin (`kubeadm:cluster-admins` group) |
-| Wapas lena (revoke) | SA/Secret delete → **foran** band | Kubernetes client certs **revoke nahi kar sakta**: **Oct 14, 2027 tak** valid |
-| Audit logs mein | `system:serviceaccount:kube-system:argocd-manager` (Argo CD alag pehchana jata) | `kubernetes-admin` (insaan admin aur Argo CD mein farq nahi) |
-| Key kahan | workload `kube-system` | s3 k3s datastore (encrypted at rest) + s1 kubeconfig |
+| Pehchan | `system:serviceaccount:kube-system:argocd-manager`: **sirf Argo CD** | `kubernetes-admin` (`kubeadm:cluster-admins`): **insaan admin jaisi** |
+| Audit log | Har request pe saaf ke Argo CD ne kiya | Argo CD aur insaan admin **aik jaise** |
+| Band karna | SA ya token Secret delete → **foran** | **Revoke nahi** hota: RBAC binding hatao ya CA rotate karo |
+| Taqat | ClusterRole se tay; scoped ho sakti hai | Group (`kubeadm:cluster-admins`) = cluster-admin |
+| Umr | Long-lived token (rotation khud karni padti hai) | Cert ki expiry tak (1 saal) |
 
-Agar ye cert leak ho jaye to usay band karne ke tareeqe: `kubeadm:cluster-admins` group ki ClusterRoleBinding hatana
-(sab admin certs band) ya cluster CA rotate karna, dono mehnge hain. Isi liye production mein Argo CD ko hamesha
-**alag, revoke ho sakne wali** pehchan (SA token, ya behtar: kam-umr exec/IAM credentials) di jati hai.
-Badalne ka tareeqa [backlog](backlog.md) mein hai. `verify.sh` (test 4) har dafa credential ki **qism** (token/cert
-aur cert ka subject) report karta hai, value nahi.
+Behtar: **kam-umr** credentials (exec plugin/IAM, ya `TokenRequest` se time-bound tokens) aur scoped permissions.
 
-**Status "Unknown":** `cluster add` ke foran baad connection test hua aur status **Successful** aaya.
-Kuch der baad `argocd cluster list` ne **Unknown** dikhaya: *"Cluster has no applications and is not
-being monitored."* Argo CD sirf un clusters ko continuously monitor karta hai jin pe koi Application
-ho. Ye normal hai, aur Phase 4b mein Application aane pe Successful ho jayega.
+**Interview sawal 1:** *Kubernetes client certificate revoke kyun nahi hota?*
+**Jawab:** API server client certs ke liye CRL ya OCSP check nahi karta. Jo cert cluster CA se signed ho aur
+expire na hua ho, wo valid hai. Band karne ke liye us user/group ki RBAC bindings hatao (agar wo kisi system group,
+jaise `system:masters`, mein na ho), ya CA rotate karo. Isi liye admin certs kam-umr rakhte hain aur automation ko
+SA tokens ya kam-umr credentials dete hain.
+
+**Interview sawal 2:** *Automation (Argo CD) ko cluster access ke liye SA token kyun dein, admin ka kubeconfig kyun nahi?*
+**Jawab:** (1) **Audit:** logs mein `system:serviceaccount:...:argocd-manager` dikhta hai, aur insaan aur machine
+alag pehchane jate hain. (2) **Revocation:** SA ya token delete karke foran band. (3) **Least privilege:** SA ko
+ClusterRole se scoped permissions di ja sakti hain. (4) Insaan ka admin cert machines mein phailana blast radius barhata hai.
+
+**Interview sawal 3:** *Audit log mein "kisne kiya" kaise pata chalta hai?*
+**Jawab:** Har API request ka authenticated **user** (aur groups) audit event mein likha jata hai: SA ke liye
+`system:serviceaccount:<ns>:<name>`, cert ke liye uska CN. Agar sab tools aur log aik hi identity (misal
+`kubernetes-admin`) use karein to audit bekaar ho jata hai. Har actor ki alag pehchan zaroori hai.
 
 ### argocd-manager ko cluster-admin dena (aur production option)
 - **Kyun cluster-admin:** Argo CD ko pehle se maloom nahi ke git mein kaun se resources honge (CRDs,
   Namespaces, ClusterRoles...), is liye default sab kuch deta hai.
-- **Khatra:** Argo CD ki workload credential (hamare case mein `kubernetes-admin` cert, upar ⚠️) = poore workload
-  cluster ka **root**, aur ye s3 pe (k3s Secret, encrypted at rest) rakhi hai. Hub compromise ho to har spoke compromise ho jata hai. Ye
+- **Khatra:** Argo CD ki workload credential (ab argocd-manager token, §2a) = poore workload cluster ka **root**, aur ye
+  s3 pe (k3s Secret, encrypted at rest) rakhi hai. Hub compromise ho to har spoke compromise ho jata hai. Ye
   hub-and-spoke ka "blast radius" ka doosra rukh hai.
 - **Production mein scoped permissions:**
   1. `argocd cluster add ... --namespace <ns1> --namespace <ns2>`: Argo CD sirf in namespaces mein Role/RoleBinding
@@ -269,14 +329,16 @@ woh repo dikhe jo usay chahiye** (least privilege).
 
 ---
 
-## 5. `verify.sh`: 7 tests (nateeja)
+## 5. `verify.sh`: tests (nateeja: 9 checks, sab PASS)
 
 | # | Test | Nateeja |
 |---|---|---|
 | 1 | CoreDNS lab.local (pod se DNS + workload API) | ✅ k8s-api → 192.168.2.11, argocd → .13, registry → .14; `/version` → v1.37.1 |
 | 2 | argocd login (stored password, prompt pe) | ✅ |
 | 3 | `argocd cluster get lab-workload` | ✅ `https://k8s-api.lab.local:6443`, `insecure: false`, status **Unknown** (koi Application nahi, normal) |
-| 4 | Workload: argocd-manager SA/ClusterRole/Binding/token | ✅ (lekin Argo CD ki asal credential: `kubernetes-admin` client cert. Test isay report karta hai) |
+| 4 | Workload: argocd-manager SA/ClusterRole/Binding/token | ✅ |
+| 4b | Argo CD credential = bearer token, TokenReview → `argocd-manager` (cert mile to FAIL) | ✅ |
+| 4c | `argocd` namespace ke kisi Secret pe `last-applied-configuration` annotation nahi | ✅ |
 | 5 | `argocd repo list` | ✅ platform-gitops **Successful** |
 | 6 | Deploy key se push `readonly-test` | ✅ mana: *"marked as read only"* |
 | 7 | Application/AppProject/ApplicationSet | ✅ 0 / sirf `default` / 0 |
@@ -293,12 +355,19 @@ woh repo dikhe jo usay chahiye** (least privilege).
    push test ne tasdeeq ki.
 6. **`cmd | grep -q` + `pipefail`** ne verify mein phir ghalat FAIL diya (Phase 1 wala hi masla). Pehle output
    variable mein, phir grep.
+7. **`argocd cluster add` ka nateeja check karo:** kubeconfig cert-based ho to v3.5.5 SA token nahi rakhta (§2a).
+8. **Secrets aur `kubectl apply` (client-side):** `last-applied-configuration` annotation mein poori object, keys
+   samet, copy ho jati hai. Hamare `repo-platform-gitops` (sshPrivateKey) aur Phase 3 ke `argocd-server-tls`
+   (tls.key) pe yahi tha. Dono scripts (`phase4/repo-credentials.sh`, `phase3/argocd-install.sh`) ab **server-side
+   apply** use karti hain. Server-side apply pe jaate hi purani annotation khud hat gayi; scripts mein hatane ka
+   fallback bhi hai. Secrets ke liye hamesha `--server-side` (ya `create`/`replace`).
 
 ## Kaise chalayein
 ```bash
 cd ~/lab-infra/phase4
 bash coredns-lab-local.sh
 bash register-cluster.sh
+bash use-sa-token.sh                        # admin cert → argocd-manager token (cluster add ke baad zaroori)
 bash repo-credentials.sh                    # key + public key dikhati hai → GitHub pe read-only deploy key
 bash repo-credentials.sh --deploy-key-added # repository Secret + verify
 bash verify.sh

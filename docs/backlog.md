@@ -61,11 +61,12 @@
       (`argocd admin export`). Hub gaya to sab spokes ka control gaya.
 
 ## GitOps (Phase 4a ke baad)
-- [ ] **Argo CD ki workload credential: admin cert → argocd-manager token** *(faisla 2026-10-15: abhi jaisa hai)*.
-      `argocd cluster add` (v3.5.5) ne cluster Secret mein s1 kubeconfig ka `kubernetes-admin` client cert/key rakha
-      (revoke nahi ho sakta, Oct 14, 2027 tak valid; audit mein insaan aur Argo CD ka farq nahi). Badalna: cluster
-      Secret `config` = argocd-manager-long-lived-token ka `bearerToken` + `caData` (stdin se, declarative), cert/key
-      hatao, `argocd cluster get` Successful. Phir admin cert ki rotation (`kubeadm certs renew admin.conf`) bhi socho.
+- [x] **Argo CD ki workload credential: admin cert → argocd-manager token** *(done 2026-10-15, `phase4/use-sa-token.sh`;
+      TokenReview → `system:serviceaccount:kube-system:argocd-manager`; docs/phase4.md §2a)*
+- [ ] **admin.conf cert exposure: s3 compromise hua to CA rotation.** `kubernetes-admin` client cert (`O=kubeadm:cluster-admins`)
+      ki copy kuch ghante s3 ke cluster Secret mein rahi (ab hat gayi). Cert **Oct 14, 2027 tak valid** hai aur revoke nahi
+      hota. Agar s3 (ya k3s datastore ka koi backup) compromise ho to workload cluster ka **CA rotate** karna hoga (saare
+      certs/kubeconfigs dobara). Saath mein: admin certs kam-umr rakhne ka tareeqa socho.
 - [ ] **argocd-manager ki permissions scoped karna**: abhi workload cluster mein `argocd-manager-role` = `*/*/*`
       (cluster-admin). Options: `argocd cluster add --namespace ...` (sirf chund namespaces), ya apna ServiceAccount +
       custom ClusterRole (`--service-account`), aur AppProject mein `clusterResourceWhitelist`. Long-lived token ki

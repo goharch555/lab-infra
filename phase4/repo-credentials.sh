@@ -67,13 +67,21 @@ sudo cat "$KEY" | "${M[@]}" -n "$ARGOCD_NS" create secret generic "$SECRET_NAME"
     --from-literal=type=git --from-literal=url="$REPO_URL" --from-literal=name=platform-gitops \
     --from-file=sshPrivateKey=/dev/stdin --dry-run=client -o yaml \
   | "${M[@]}" label --local -f - argocd.argoproj.io/secret-type=repository app.kubernetes.io/managed-by=lab-infra-phase4 -o yaml \
-  | "${M[@]}" apply -f - >/dev/null
+  | "${M[@]}" apply --server-side --force-conflicts --field-manager=lab-infra-phase4 -f - >/dev/null
+# SERVER-SIDE apply: client-side "kubectl apply" poori object (private key samet) "last-applied-configuration"
+# annotation mein bhi likh deta hai — aur annotations "kubectl describe" mein dikhti hain. Purani annotation ho to hatao.
+if "${M[@]}" -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json | jq -e '.metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]' >/dev/null; then
+  "${M[@]}" -n "$ARGOCD_NS" annotate secret "$SECRET_NAME" kubectl.kubernetes.io/last-applied-configuration- >/dev/null
+  log "purani last-applied annotation (sshPrivateKey ki copy) hata di"
+fi
 after="$("${M[@]}" -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o jsonpath='{.metadata.resourceVersion}')"
 [[ "$before" == "$after" ]] && log "repository Secret ${SECRET_NAME} pehle se theek" || log "repository Secret ${SECRET_NAME} apply kiya"
 
 # --- Verify -------------------------------------------------------------------------------------------------
 "${M[@]}" -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json \
   | jq '{name: .metadata.name, labels: .metadata.labels, data_keys: (.data|keys), type: (.data.type|@base64d), url: (.data.url|@base64d)}'
+! "${M[@]}" -n "$ARGOCD_NS" get secret "$SECRET_NAME" -o json | jq -e '.metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"]' >/dev/null \
+  || fail "${SECRET_NAME} pe last-applied annotation (key ki copy) hai"
 st=""
 for _ in $(seq 1 12); do
   st="$(argocd repo list --grpc-web -o json | jq -r --arg u "$REPO_URL" '.[] | select(.repo==$u) | .connectionState.status')"

@@ -71,8 +71,9 @@ lab-infra/
 │   ├── coredns-custom.yaml # k3s CoreDNS: lab.local zone (alag server block)
 │   ├── coredns-lab-local.sh # coredns-custom apply + pod se DNS/API test                 (s1 → lab-mgmt)
 │   ├── register-cluster.sh # argocd cluster add lab-workload (login prompt pe)           (s1)
+│   ├── use-sa-token.sh     # Argo CD cluster Secret: admin cert → argocd-manager token  (s1 → dono)
 │   ├── repo-credentials.sh # read-only deploy key + declarative repository Secret       (s1 → lab-mgmt)
-│   └── verify.sh           # 7 tests (asal read-only push test samet)
+│   └── verify.sh           # 9 checks (TokenReview, read-only push test samet)
 ├── phase3/
 │   ├── versions.sh         # k3s, helm, argo-cd chart/app versions + settings
 │   ├── k3s.sh              # config.yaml → k3s install (pinned) → verify                (s3)

@@ -241,6 +241,10 @@ CA requested extensions pe andha bharosa nahi karti; SAN/usage policy ke mutabiq
 4. Saare deployments/statefulsets ka rollout, phir `https://argocd.lab.local` (Lab CA se) → 200, aur
    `http://` (port 80) pe Argo CD **nahi** (404).
 
+**Note (Phase 4a mein theek hua):** pehle ye Secret client-side `kubectl apply` se banta tha, jis se `tls.key` ki copy
+`last-applied-configuration` annotation mein bhi chali gayi thi. Ab `--server-side` apply hai aur annotation hat gayi
+(docs/phase4.md "Raaste mein seekha" #8).
+
 **⚠️ TLS Secret abhi BOOTSTRAP hai:** ye haath se (script se) bana hai, aur cert ki renewal ke liye
 `argocd-cert.sh` + `argocd-install.sh` dobara chalani hongi. Baad mein **cert-manager** (Lab CA ko
 `ClusterIssuer` bana kar) ye kaam khud karega: Certificate object → Secret → automatic renewal.
